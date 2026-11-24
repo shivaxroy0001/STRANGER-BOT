@@ -1,0 +1,565 @@
+/* Stranger Bot core. Shared by the HTML preview and the Discord bot.
+   Pure logic: no DOM, no discord.js. Screens are plain data ("views") that
+   each renderer turns into pixels (preview) or Components V2 (bot). */
+(function (root) {
+'use strict';
+const C = {};
+
+/* ---------- constants ---------- */
+C.COLOR = { blue: 0x5865f2, green: 0x248046, red: 0xda373c, amber: 0xf0b132, gray: 0x4e5058, purple: 0xb45be0 };
+C.MODES = [
+  ['Interest match', '🎯', 'Shared interests first, then widens'],
+  ['Anyone', '🎲', 'Shortest wait'],
+  ['Nearby', '📍', 'Same broad region only'],
+  ['Same language', '🗣️', 'Someone who speaks your language'],
+  ['Language practice', '📚', 'Fluent speakers meet learners'],
+];
+C.REGIONS = ['North America', 'South America', 'Europe', 'Africa', 'Middle East', 'South Asia', 'East Asia', 'Southeast Asia', 'Oceania'];
+C.LANGS = ['English', 'Spanish', 'French', 'German', 'Portuguese', 'Arabic', 'Hindi', 'Japanese', 'Korean', 'Chinese', 'Turkish', 'Russian'];
+C.ALL = ['gaming', 'music', 'movies', 'anime', 'books', 'art', 'coding', 'sports', 'fitness', 'travel', 'cooking', 'memes', 'science', 'photography', 'fashion', 'pets'];
+C.AVATARS = ['🦊', '🐼', '🐙', '🦉', '🐢', '🦄', '🐸', '🦋'];
+C.MOODS = ['Want to talk', 'Just browsing', 'Only chill chats', 'Deep talks'];
+C.AGES = ['Any', '18–24', '25–34', '35+'];
+C.MYAGES = ['18–24', '25–34', '35+'];
+C.REASONS = ['Harassment', 'Spam or links', 'Sexual content', 'Underage user', 'Hate speech', 'Other'];
+C.ICE = ["What's the last song you had on repeat?", 'If you could live anywhere for a year, where?', 'Best thing you ate this week?', 'What would your dream day off look like?', 'Which show do you rewatch the most?', "What's a small thing that made you smile today?"];
+C.TIPS = ['Add interests to get better matches.', 'Nearby uses only a broad region you pick.', 'Use Panic if anything feels wrong.', 'Verified users get shorter waits.', 'Claim your daily XP to keep your streak.'];
+const REGION_N = { 'North America': 14, 'South America': 6, 'Europe': 12, 'Africa': 3, 'Middle East': 2, 'South Asia': 5, 'East Asia': 4, 'Southeast Asia': 3, 'Oceania': 1 };
+C.GAMES = {
+  wyr: { id: 'wyr', name: 'Would you rather', e: '🤔', desc: 'Pick A or B and see if you match.', qs: [['Be able to fly', 'Be invisible'], ['Always be 10 min late', 'Always be 20 min early'], ['Live in the mountains', 'Live by the sea'], ['Never use social media', 'Never watch movies'], ['Only eat sweet food', 'Only eat salty food'], ['Have a pet dragon', 'Have a pet robot']].map(o => ({ q: 'Would you rather…', o })) },
+  tot: { id: 'tot', name: 'This or that', e: '⚡', desc: 'Quick picks. Match or mismatch.', qs: [['Coffee', 'Tea'], ['Cats', 'Dogs'], ['Night owl', 'Early bird'], ['Beach', 'Forest'], ['Books', 'Movies'], ['Pizza', 'Burgers']].map(o => ({ q: 'This or that?', o })) },
+  tri: { id: 'tri', name: 'Trivia', e: '🧠', desc: 'Same question, who gets it right?', qs: [
+    { q: 'Which planet is closest to the Sun?', o: ['Venus', 'Mercury', 'Mars', 'Earth'], a: 1 },
+    { q: 'How many continents are there?', o: ['5', '6', '7', '8'], a: 2 },
+    { q: 'What is the capital of Japan?', o: ['Kyoto', 'Osaka', 'Tokyo', 'Nagoya'], a: 2 },
+    { q: 'Which gas do plants absorb?', o: ['Oxygen', 'Carbon dioxide', 'Helium', 'Neon'], a: 1 },
+    { q: 'Which is the largest ocean?', o: ['Atlantic', 'Indian', 'Arctic', 'Pacific'], a: 3 },
+    { q: 'How many strings does a standard guitar have?', o: ['4', '5', '6', '7'], a: 2 }] },
+};
+C.POLLS = [
+  { q: 'Which would you keep forever?', o: ['Morning', 'Night'], b: [41, 59] },
+  { q: 'Better way to spend a Sunday?', o: ['Out and about', 'Fully at home'], b: [36, 64] },
+  { q: 'Which wins?', o: ['Sweet breakfast', 'Savory breakfast'], b: [47, 53] },
+];
+C.BADGES = [
+  ['first', '💬', 'First chat', 'Finish one chat', S => S.stats.chats >= 1],
+  ['social', '🌍', 'Socialite', 'Finish 10 chats', S => S.stats.chats >= 10],
+  ['streak', '🔥', 'Warm streak', 'Reach a 3-day streak', S => S.streak >= 3],
+  ['kind', '💛', 'Kind stranger', 'Get 3 good ratings from you', S => S.stats.good >= 3],
+  ['near', '📍', 'Explorer', 'Finish a Nearby chat', S => S.stats.nearby >= 1],
+  ['game', '🎮', 'Game on', 'Finish a game', S => S.stats.games >= 1],
+  ['ver', '✅', 'Verified', 'Reach verification level 2', S => S.vlevel >= 2],
+];
+C.LB = [['CalmOtter', 912], ['NightLynx', 860], ['PixelMoth', 801], ['SoftComet', 744], ['LateTea', 690]];
+const NOTIFS = [['match', 'Match found', 'Ping me when someone is found'], ['reveal', 'Reveal requests', 'Tell me when a partner wants to swap usernames'], ['game', 'Game invites', 'Show invites from your partner'], ['dm', 'Alerts by DM', 'Send alerts to your DMs'], ['quiet', 'Quiet hours', 'No alerts from 11 PM to 7 AM']];
+const PRIV = [['discoverable', 'Discoverable', 'Others can be matched with you'], ['showBadge', 'Show verified badge', 'Partners can see your badge'], ['showRegion', 'Show my region', 'Partners can see your broad region'], ['verifiedOnly', 'Verified-only matching', 'Only match with verified users (level 2+)']];
+const lvl = xp => Math.floor(xp / 200) + 1;
+const bar = (v, max, n = 10) => { const f = Math.max(0, Math.min(n, Math.round((v / (max || 1)) * n))); return '▰'.repeat(f) + '▱'.repeat(n - f); };
+const modeE = m => (C.MODES.find(x => x[0] === m) || [0, '🎲'])[1];
+C.today = () => Math.floor(Date.now() / 864e5);
+C.lvl = lvl; C.bar = bar;
+
+/* ---------- commands (one spec drives /help, the console and Discord registration) ---------- */
+const O = (n, t, d, req, ch) => ({ n, t, d, req: !!req, ch });
+C.CMDS = [
+  { n: 'menu', d: 'Open your main menu', g: 'Chat' },
+  { n: 'chat', s: 'start', d: 'Find a stranger to chat with', g: 'Chat', o: [O('mode', 's', 'Match mode', 0, C.MODES.map(m => m[0]))], cd: 2 },
+  { n: 'chat', s: 'skip', d: 'Skip to someone new', g: 'Chat', cd: 3 },
+  { n: 'chat', s: 'stop', d: 'End the current chat', g: 'Chat' },
+  { n: 'chat', s: 'reveal', d: 'Ask to swap Discord usernames', g: 'Chat' },
+  { n: 'chat', s: 'icebreaker', d: 'Send a conversation starter', g: 'Chat', cd: 10 },
+  { n: 'chat', s: 'report', d: 'Report your partner', g: 'Chat', o: [O('reason', 's', 'What happened', 1, C.REASONS)] },
+  { n: 'panic', d: 'Leave instantly and block your partner', g: 'Chat' },
+  { n: 'nearby', d: 'Match with people in your region', g: 'Chat', o: [O('region', 's', 'Your broad region', 0, C.REGIONS)] },
+  { n: 'play', d: 'Games and the question of the day', g: 'Chat' },
+  { n: 'profile', s: 'view', d: 'See your profile', g: 'Profile' },
+  { n: 'profile', s: 'edit', d: 'Edit your alias and bio', g: 'Profile', o: [O('alias', 's', 'New alias, 3 to 16 letters or numbers'), O('bio', 's', 'Bio, up to 80 characters')] },
+  { n: 'interests', d: 'Pick up to 5 interests', g: 'Profile', o: [O('list', 's', 'Comma-separated, e.g. gaming, music', 1)] },
+  { n: 'quests', d: 'Daily quests and XP', g: 'Profile' },
+  { n: 'badges', d: 'Badges you have earned', g: 'Profile' },
+  { n: 'leaderboard', d: 'Weekly kindness leaderboard', g: 'Profile' },
+  { n: 'settings', d: 'Alerts and privacy', g: 'Profile' },
+  { n: 'verify', s: 'status', d: 'See your verification level', g: 'Safety' },
+  { n: 'verify', s: 'code', d: 'Submit your 6-digit phone code', g: 'Safety', o: [O('code', 'i', 'The 6-digit code', 1)] },
+  { n: 'safety', d: 'Open the safety center', g: 'Safety' },
+  { n: 'block', s: 'list', d: 'See and unblock users', g: 'Safety' },
+  { n: 'appeal', d: 'Appeal a moderation decision', g: 'Safety', o: [O('reason', 's', 'Why it should be reviewed, 20+ characters', 1)] },
+  { n: 'help', d: 'Show every command', g: 'Chat', o: [O('group', 's', 'Command group', 0, ['Chat', 'Profile', 'Safety', 'Staff'])] },
+  { n: 'mod', s: 'queue', d: 'Open the report queue', g: 'Staff', p: 'Mod' },
+  { n: 'server', s: 'settings', d: 'Server settings', g: 'Staff', p: 'Admin' },
+  { n: 'server', s: 'setup', d: 'Choose the stranger chat channel', g: 'Staff', p: 'Admin', o: [O('channel', 'c', 'Channel for panels', 1)] },
+];
+C.cname = c => '/' + c.n + (c.s ? ' ' + c.s : '');
+C.GROUP_DESC = { chat: 'Anonymous chat controls', profile: 'Your anonymous profile', verify: 'Verification', block: 'Block list', mod: 'Moderator tools', server: 'Server admin tools' };
+
+/* ---------- state ---------- */
+C.newUser = function (o) {
+  return Object.assign({
+    screen: 'home', prev: 'home', adult: false, minor: false, role: 'User',
+    alias: 'QuietFox', bio: '', avatar: '🦊', mood: 'Want to talk',
+    mode: 'Interest match', age: 'Any', myAge: '18–24', region: 'Europe', lang: ['English'], interests: ['gaming', 'music'],
+    vlevel: 0, xp: 120, streak: 3, lastDaily: C.today() - 1, qday: C.today(),
+    quests: { chat: 0, rate: 0, game: 0 }, claimed: {}, poll: null,
+    notif: { match: true, reveal: true, game: true, dm: true, quiet: false },
+    discoverable: true, showBadge: true, showRegion: true, verifiedOnly: false,
+    blocks: [], strikes: 0, stats: { chats: 4, good: 2, nearby: 0, games: 0 },
+    searching: null, chat: null, game: null, last: null, rated: false, rep: null, confirm: null,
+    stab: 'alerts', hcat: 'Chat', cd: {}, sv: { on: true, vo: false, safe: true }, repN: 1041,
+  }, o || {});
+};
+C.defEnv = function () {
+  return {
+    now: () => Date.now(), day: () => C.today(),
+    online: r => (r ? (REGION_N[r] || 0) : Object.values(REGION_N).reduce((a, b) => a + b, 0)),
+    reports: [{ id: 1042, reason: 'Harassment', n: 14, by: 'Stranger #7782', ago: '2h' }, { id: 1043, reason: 'Spam or links', n: 6, by: 'Stranger #1190', ago: '3h' }],
+    lb: () => C.LB,
+  };
+};
+
+/* ---------- helpers: text safety and validation ---------- */
+C.clean = function (t) {
+  let removed = false;
+  const s = String(t).replace(/(https?:\/\/|www\.)\S+|\b\S+\.(com|net|org|gg|io|me|ly)\b\S*/gi, () => { removed = true; return '[link removed]'; })
+    .replace(/\b\d[\d\s().-]{8,}\d\b/g, () => { removed = true; return '[number removed]'; })
+    .replace(/\S+@\S+\.\S+/g, () => { removed = true; return '[email removed]'; });
+  return { text: s.slice(0, 1500), removed };
+};
+C.checkAlias = a => !/^[A-Za-z0-9 ]{3,16}$/.test(a) ? 'Use 3 to 16 letters or numbers.' : /admin|mod|support|staff/i.test(a) ? 'That alias is reserved.' : '';
+C.checkBio = b => b.length > 80 ? 'Keep your bio under 80 characters.' : /https?:|www\.|@|\d{7,}/i.test(b) ? 'Bios cannot include links or contact details.' : '';
+
+/* ---------- block builders ---------- */
+const T = md => ({ k: 'text', md });
+const SEP = () => ({ k: 'sep' });
+const btn = (id, label, style, emoji, x) => Object.assign({ k: 'btn', id, label, style: style || 'secondary', emoji }, x || {});
+const row = (...items) => ({ k: 'row', items: items.filter(Boolean) });
+const sel = (id, ph, opts, min, max) => ({ k: 'select', id, ph, opts, min: min == null ? 1 : min, max: max || 1 });
+const sec = (md, b) => ({ k: 'section', md, btn: b });
+const TABS = [['home', '💬', 'Chat'], ['nearby', '📍', 'Nearby'], ['play', '🎮', 'Play'], ['me', '👤', 'Me'], ['safety', '🛡️', 'Safety']];
+const tabs = act => row(...TABS.map(([id, e, l]) => btn('nav:' + id, l, 'secondary', e, id === act ? { disabled: true } : null)));
+const back = (to, label) => btn('nav:' + (to || 'home'), label || 'Back', 'secondary', '⬅️');
+const tg = (key, on, label, desc, dis) => sec(`**${label}**\n-# ${desc}`, btn('tg:' + key, on ? 'On' : 'Off', on ? 'success' : 'secondary', on ? '✅' : '⬜', dis ? { disabled: true } : null));
+const tag = c => c && c.tag ? 'Stranger ' + c.tag : 'Stranger';
+const fmtDur = s => (s >= 60 ? Math.floor(s / 60) + 'm ' : '') + (s % 60) + 's';
+const homeTarget = S => S.chat ? 'chat' : S.searching ? 'searching' : 'home';
+
+/* ---------- views ---------- */
+const V = {};
+V.gate = () => ({ color: 'blue', blocks: [
+  T('## 👋 Welcome to Stranger chat\nMeet new people anonymously. Before you start:\n- You must be **18 or older**\n- Never share your real name, school, phone or address\n- Links are removed and reports are reviewed by moderators\n\n-# Confirming your age is a self-declaration. Verification levels add more trust.'),
+  row(btn('gate:yes', "I'm 18 or older", 'primary', '✅'), btn('gate:no', "I'm under 18", 'secondary', '🚪')) ] });
+V.minor = () => ({ color: 'gray', blocks: [T('## 🚪 You can’t use this bot\nStranger chat is only for people aged 18 and over. Take care, and see you when you’re older.')] });
+V.home = (S, env) => {
+  const on = env.online(), reg = env.online(S.region), claimed = S.lastDaily === env.day();
+  return { color: 'blue', blocks: [
+    T(`## 💬 Stranger chat\n${S.avatar} **${S.alias}** · Level ${lvl(S.xp)} · 🔥 ${S.streak}-day streak\n${bar(S.xp % 200, 200)} ${S.xp % 200}/200 XP\n\n🟢 **${on}** online · 📍 **${reg}** in ${S.region}`),
+    SEP(),
+    T(`**Looking for**\n${modeE(S.mode)} ${S.mode} · Age ${S.age} · ${S.lang.join(', ')}${S.verifiedOnly ? ' · ✅ Verified only' : ''}`),
+    sel('sel:mode', 'Match mode', C.MODES.map(m => ({ label: m[0], value: m[0], emoji: m[1], desc: m[2], def: m[0] === S.mode }))),
+    row(btn('chat:find', 'Find someone', 'primary', '🔍'), btn('nav:filters', 'Filters', 'secondary', '🎚️'),
+      claimed ? btn('daily:claim', 'Claimed', 'secondary', '🎁', { disabled: true }) : btn('daily:claim', 'Daily +50 XP', 'success', '🎁')),
+    tabs('home') ] };
+};
+V.filters = S => ({ color: 'blue', blocks: [
+  T(`## 🎚️ Filters\nNarrow who you can match with. Fewer filters means shorter waits.`),
+  sel('sel:age', 'Age range', C.AGES.map(a => ({ label: a, value: a, def: a === S.age }))),
+  sel('sel:lang', 'Languages (up to 3)', C.LANGS.map(l => ({ label: l, value: l, def: S.lang.includes(l) })), 1, 3),
+  tg('verifiedOnly', S.verifiedOnly, 'Verified-only', S.vlevel >= 2 ? 'Match only with verified users' : 'Needs verification level 2', S.vlevel < 2),
+  row(btn('nav:home', 'Done', 'primary', '✅'), btn('nav:verify', 'Verify', 'secondary', '✅')) ] });
+V.searching = (S, env) => {
+  const sec_ = Math.max(0, Math.round((env.now() - S.searching.since) / 1000));
+  return { color: 'blue', blocks: [
+    T(`## 🔍 Looking for someone\n${modeE(S.mode)} **${S.mode}**${S.mode === 'Nearby' ? ' · ' + S.region : ''} · Age ${S.age}\n${bar(sec_ % 31, 30)} ${sec_}s\n\n-# Tip: ${C.TIPS[Math.floor(sec_ / 8) % C.TIPS.length]}`),
+    row(btn('chat:cancel', 'Cancel', 'danger', '❌'), btn('chat:any', 'Try anyone', 'secondary', '🎲'), btn('nav:filters', 'Filters', 'secondary', '🎚️')) ] };
+};
+V.chat = (S, env) => {
+  const c = S.chat, g = S.game;
+  const secs = Math.round((env.now() - c.t0) / 1000);
+  const rev = c.rev === 'done' ? `\n🔓 Username: **${c.uname || 'shared'}**` : c.rev === 'sent' ? '\n⏳ Reveal request sent' : '';
+  const blocks = [T(`## 🟢 Connected\n**${tag(c)}**${c.verified && c.showBadge !== false ? ' · ✅ Verified' : ''}${c.region ? ' · 📍 ' + c.region : ''}\nShared: ${c.shared.length ? c.shared.join(', ') : 'none yet'} · Mood: ${c.mood}\n⏱ ${fmtDur(secs)} · 💬 ${c.n} message${c.n === 1 ? '' : 's'}${rev}\n\n-# Type here to send. Links and numbers are removed.`)];
+  if (c.rev === 'got') blocks.push(SEP(), T(`🔓 **${tag(c)}** wants to swap usernames.`), row(btn('reveal:yes', 'Accept', 'success', '✅'), btn('reveal:no', 'Decline', 'secondary', '❌')));
+  if (g && g.state === 'incoming') blocks.push(SEP(), T(`${C.GAMES[g.g].e} **${tag(c)}** invites you to **${C.GAMES[g.g].name}**.`), row(btn('game:yes', 'Accept', 'success', '✅'), btn('game:no', 'Decline', 'secondary', '❌')));
+  if (g && g.state === 'invited') blocks.push(SEP(), T(`⏳ Waiting for ${tag(c)} to accept **${C.GAMES[g.g].name}**.`));
+  blocks.push(SEP(),
+    row(btn('chat:skip', 'Skip', 'primary', '⏭️'), btn('chat:ice', 'Icebreaker', 'secondary', '💡'), btn('nav:play', 'Play', 'secondary', '🎮'),
+      btn('chat:reveal', c.rev === 'sent' ? 'Waiting' : 'Reveal', 'secondary', '🔓', { disabled: c.rev === 'sent' || c.rev === 'done' || c.rev === 'got' })),
+    row(btn('chat:report', 'Report', 'secondary', '🚩'), btn('chat:panic', 'Panic', 'danger', '🆘'), btn('chat:stop', 'End', 'danger', '⏹️')));
+  return { color: 'green', blocks };
+};
+V.ended = S => {
+  const l = S.last || { tag: '', n: 0, dur: 0 };
+  return { color: 'gray', blocks: [
+    T(`## 👋 Chat ended\nYou talked with **Stranger ${l.tag || ''}** for ${fmtDur(l.dur)} · 💬 ${l.n} messages${l.why === 'partner' ? '\n-# They left the chat.' : ''}\n\n${S.rated ? '✅ Thanks for rating.' : '**How was it?**'}`),
+    row(btn('end:good', 'Good', 'success', '👍', { disabled: S.rated }), btn('end:bad', 'Bad', 'secondary', '👎', { disabled: S.rated }), btn('end:block', 'Block', 'danger', '🚫', { disabled: !!(S.last && S.last.blocked) })),
+    row(btn('chat:find', 'Find someone new', 'primary', '🔍'), btn('nav:home', 'Home', 'secondary', '🏠')) ] };
+};
+V.panic = () => ({ color: 'red', blocks: [
+  T('## 🆘 You left the chat\nYour partner was **blocked** and the last 20 messages were saved for moderators. You are safe here.'),
+  row(btn('chat:find', 'Find someone new', 'primary', '🔍'), btn('nav:safety', 'Safety center', 'secondary', '🛡️'), btn('nav:home', 'Home', 'secondary', '🏠')) ] });
+V.report = (S) => ({ color: 'red', blocks: [
+  T(`## 🚩 Report ${tag(S.chat)}\nPick a reason. The last 20 messages are attached for moderators.\n\n**Reason:** ${S.rep && S.rep.reason ? S.rep.reason : '*not chosen yet*'}${S.rep && S.rep.details ? '\n**Details:** ' + S.rep.details : ''}`),
+  sel('sel:reason', 'Why are you reporting?', C.REASONS.map(r => ({ label: r, value: r, def: S.rep && S.rep.reason === r }))),
+  row(btn('rep:send', 'Send report', 'danger', '🚩', { disabled: !(S.rep && S.rep.reason) }), btn('rep:details', 'Add details', 'secondary', '📝'), btn('nav:chat', 'Cancel', 'secondary', '⬅️')) ] });
+V.confirm = S => {
+  const c = S.confirm;
+  return { color: c.danger ? 'red' : 'blue', blocks: [T(`## ${c.title}\n${c.body}`),
+    row(btn('ok:' + c.yes, c.label, c.danger ? 'danger' : 'primary', c.danger ? '⚠️' : '✅'), btn('no', 'Cancel', 'secondary', '⬅️'))] };
+};
+V.nearby = (S, env) => {
+  const max = Math.max(...C.REGIONS.map(r => env.online(r)), 1);
+  const lines = C.REGIONS.map(r => `${r === S.region ? '📍' : '▫️'} ${r} ${bar(env.online(r), max, 8)} **${env.online(r)}**`).join('\n');
+  return { color: 'purple', blocks: [
+    T(`## 📍 Nearby\nMeet people from your part of the world. We use only a **broad region you choose**, never your exact location.\n\n${lines}`),
+    sel('sel:region', 'Your region', C.REGIONS.map(r => ({ label: r, value: r, emoji: '📍', def: r === S.region }))),
+    tg('showRegion', S.showRegion, 'Show my region to matches', 'Partners can see your broad region'),
+    row(btn('nearby:find', 'Find nearby', 'primary', '📍'), btn('nearby:any', 'Match anyone', 'secondary', '🎲')),
+    tabs('nearby') ] };
+};
+V.play = (S, env) => {
+  const P = C.POLLS[env.day() % C.POLLS.length], pk = S.poll;
+  const blocks = [T('## 🎮 Play\nGames need a partner. The daily question is solo.' + (S.chat ? '' : '\n-# Start a chat to unlock games.'))];
+  Object.values(C.GAMES).forEach(g => blocks.push(sec(`**${g.e} ${g.name}**\n-# ${g.desc}`, btn('game:invite:' + g.id, 'Invite', 'secondary', '🎮', { disabled: !S.chat || !!S.game }))));
+  blocks.push(SEP());
+  if (!pk) blocks.push(T(`**📊 Question of the day**\n${P.q}`), row(btn('poll:0', P.o[0], 'secondary', '🅰️'), btn('poll:1', P.o[1], 'secondary', '🅱️')));
+  else {
+    const cnt = P.b.map((x, i) => x + (pk.v === i ? 1 : 0)), tot = cnt[0] + cnt[1];
+    blocks.push(T(`**📊 ${P.q}**\n${P.o.map((o, i) => `${pk.v === i ? '✅' : '▫️'} ${o} ${bar(cnt[i], tot)} **${Math.round(cnt[i] / tot * 100)}%**`).join('\n')}`));
+  }
+  blocks.push(tabs('play'));
+  return { color: 'amber', blocks };
+};
+V.game = (S, env) => {
+  const g = S.game, G = C.GAMES[g.g], q = G.qs[g.q], both = g.mine != null && g.theirs != null;
+  const lab = i => (g.g === 'tri' ? 'ABCD'[i] + ') ' : '') + q.o[i];
+  let st = g.mine == null ? 'Pick one.' : both ? '' : `You picked **${q.o[g.mine]}**. Waiting for ${tag(S.chat)}…`;
+  if (both) {
+    const m = g.mine === g.theirs;
+    st = `You: **${q.o[g.mine]}**\n${tag(S.chat)}: **${q.o[g.theirs]}**\n\n` + (g.g === 'tri'
+      ? (g.mine === q.a ? '✅ You got it right!' : `❌ The answer was **${q.o[q.a]}**.`) + (g.theirs === q.a ? ` ${tag(S.chat)} got it too.` : '')
+      : m ? '🎉 **You matched!**' : '🌗 Different picks. Ask why!');
+  }
+  const picks = q.o.map((_, i) => btn('game:pick:' + i, lab(i), g.mine === i ? 'success' : 'secondary', g.g === 'tri' ? null : (i ? '🅱️' : '🅰️'), { disabled: g.mine != null }));
+  return { color: 'amber', blocks: [
+    T(`## ${G.e} ${G.name} · Round ${g.round}\n**${q.q}**\n\n${st}\n-# ${g.g === 'tri' ? 'Correct answers' : 'Matches'}: ${g.score}`),
+    row(...picks),
+    row(btn('game:next', 'Next round', both ? 'primary' : 'secondary', '🔁', { disabled: !both }), btn('game:close', 'Back to chat', 'secondary', '⬅️')) ] };
+};
+V.me = S => {
+  const vt = ['Not verified', 'Age confirmed', 'Phone verified', 'Selfie verified'][S.vlevel];
+  return { color: 'blue', blocks: [
+    T(`## ${S.avatar} ${S.alias}\n${S.bio || '*No bio yet. Add one in Edit profile.*'}\n\n⭐ Level ${lvl(S.xp)} · ${bar(S.xp % 200, 200)} ${S.xp} XP\n✅ ${vt} · 📍 ${S.region}${S.showRegion ? '' : ' (hidden)'} · 😊 ${S.mood}\n🎯 ${S.interests.join(', ') || 'No interests yet'}`),
+    row(btn('nav:editp', 'Edit profile', 'primary', '✏️'), btn('nav:interests', 'Interests', 'secondary', '🎯'), btn('nav:settings', 'Settings', 'secondary', '⚙️')),
+    row(btn('nav:quests', 'Quests', 'secondary', '📋'), btn('nav:badges', 'Badges', 'secondary', '🏅'), btn('nav:leaderboard', 'Leaderboard', 'secondary', '🏆')),
+    tabs('me') ] };
+};
+V.editp = S => ({ color: 'blue', blocks: [
+  T(`## ✏️ Edit profile\n${S.avatar} **${S.alias}** · ${S.mood}\n${S.bio || '*No bio yet*'}`),
+  sel('sel:avatar', 'Avatar', C.AVATARS.map(a => ({ label: 'Avatar', value: a, emoji: a, def: a === S.avatar }))),
+  sel('sel:mood', 'Mood', C.MOODS.map(m => ({ label: m, value: m, def: m === S.mood }))),
+  sel('sel:myage', 'My age group (used for age filters, never shown)', C.MYAGES.map(a => ({ label: a, value: a, def: a === S.myAge }))),
+  row(btn('prof:name', 'Edit name & bio', 'primary', '✏️'), btn('nav:me', 'Done', 'secondary', '✅')) ] });
+V.interests = S => ({ color: 'blue', blocks: [
+  T(`## 🎯 Interests\nPick up to 5. We match you with people who share them first.\n\n**Selected (${S.interests.length}/5):** ${S.interests.join(', ') || 'none'}`),
+  sel('sel:int', 'Choose interests', C.ALL.map(i => ({ label: i, value: i, def: S.interests.includes(i) })), 1, 5),
+  row(btn('nav:me', 'Done', 'primary', '✅')) ] });
+V.settings = S => {
+  const al = S.stab === 'alerts';
+  const items = al ? NOTIFS.map(([k, l, d]) => tg('n.' + k, S.notif[k], l, d)) : PRIV.map(([k, l, d]) => tg(k, S[k], l, d, k === 'verifiedOnly' && S.vlevel < 2));
+  return { color: 'blue', blocks: [T('## ⚙️ Settings'),
+    row(btn('stab:alerts', 'Alerts', 'secondary', '🔔', { disabled: al }), btn('stab:privacy', 'Privacy', 'secondary', '🔒', { disabled: !al })),
+    ...items, row(btn('nav:me', 'Done', 'primary', '✅'))] };
+};
+V.quests = (S, env) => {
+  const Q = [['chat', '💬', 'Finish 3 chats (3+ messages each)', 3, 40], ['rate', '👍', 'Rate a chat', 1, 20], ['game', '🎮', 'Finish a game', 1, 30]];
+  const blocks = [T(`## 📋 Daily quests\nResets every day. 🔥 Streak: **${S.streak}** days\n${Array.from({ length: 7 }, (_, i) => (i < S.streak % 7 || S.streak >= 7 ? '🟧' : '⬜')).join('')}`)];
+  Q.forEach(([k, e, l, n, xp]) => {
+    const v = Math.min(S.quests[k], n), done = v >= n, cl = S.claimed[k];
+    blocks.push(sec(`**${e} ${l}**\n${bar(v, n, 6)} ${v}/${n} · +${xp} XP`, btn('q:' + k, cl ? 'Claimed' : 'Claim', done && !cl ? 'success' : 'secondary', cl ? '✅' : '🎁', { disabled: !done || cl })));
+  });
+  blocks.push(row(btn('nav:me', 'Back', 'secondary', '⬅️'), btn('nav:leaderboard', 'Leaderboard', 'secondary', '🏆')));
+  return { color: 'amber', blocks };
+};
+V.badges = S => ({ color: 'amber', blocks: [
+  T(`## 🏅 Badges\n${C.BADGES.filter(b => b[4](S)).length}/${C.BADGES.length} earned\n\n` + C.BADGES.map(b => b[4](S) ? `${b[1]} **${b[2]}**` : `🔒 ${b[2]} · *${b[3]}*`).join('\n')),
+  row(btn('nav:me', 'Back', 'secondary', '⬅️')) ] });
+V.leaderboard = (S, env) => {
+  const list = (env.lb ? env.lb() : C.LB).slice();
+  const all = list.concat([[S.alias + ' (you)', S.xp]]).sort((a, b) => b[1] - a[1]);
+  const top = all.slice(0, 6), mine = all.findIndex(x => x[0].endsWith('(you)'));
+  const mx = top[0][1];
+  return { color: 'amber', blocks: [
+    T(`## 🏆 Kindness leaderboard\nResets every Monday. Ranked by good ratings and XP.\n\n` + top.map((x, i) => `**${i + 1}.** ${['🥇', '🥈', '🥉'][i] || ''} ${x[0]} ${bar(x[1], mx, 6)} ${x[1]}`).join('\n') + (mine > 5 ? `\n…\n**${mine + 1}.** ${S.alias} (you) ${S.xp}` : '')),
+    row(btn('nav:quests', 'Quests', 'secondary', '📋'), btn('nav:me', 'Back', 'secondary', '⬅️')) ] };
+};
+V.verify = (S, env) => {
+  const L = [['Age confirmed', 'Confirm you are 18+'], ['Phone verified', 'Enter a 6-digit code'], ['Selfie check', 'Quick one-time photo check']];
+  const off = !!env.verifyOff;
+  const next = [btn('ver:age', 'Confirm age', 'primary', '✅'), btn('ver:phone', 'Enter phone code', 'primary', '📱', { disabled: off }), btn('ver:selfie', 'Start selfie check', 'primary', '🤳', { disabled: off })][S.vlevel];
+  return { color: 'green', blocks: [
+    T(`## ✅ Verification\nHigher levels get shorter waits and unlock verified-only matching.\n\n` + L.map((l, i) => `${S.vlevel > i ? '✅' : S.vlevel === i ? '👉' : '⬜'} **Level ${i + 1}: ${l[0]}**\n-# ${l[1]}`).join('\n') + '\n\n' + (off && S.vlevel >= 1 ? '⚠️ Phone and selfie checks are not connected on this bot yet.' : '-# Your phone number and photo are never shown to other users.')),
+    row(next || btn('nav:me', 'All done', 'secondary', '🎉', { disabled: true }), btn('nav:safety', 'Safety', 'secondary', '🛡️'), btn('nav:home', 'Home', 'secondary', '🏠')) ] };
+};
+V.safety = S => ({ color: 'green', blocks: [
+  T(`## 🛡️ Safety center\nYou stay anonymous until you both choose to reveal.\n- Never share your real name, school, phone or address\n- Links, emails and numbers are removed\n- **Panic** leaves and blocks in one tap\n- Reports save the last 20 messages for moderators\n- If you are in danger, contact local emergency services\n\n⚠️ Strikes: **${S.strikes}/4** · 🚫 Blocked: **${S.blocks.length}**`),
+  row(btn('nav:blocks', 'Blocked', 'secondary', '🚫'), btn('nav:verify', 'Verify', 'secondary', '✅'), btn('ap:open', 'Appeal', 'secondary', '📝'), btn('nav:help', 'Help', 'secondary', '❓')),
+  tabs('safety') ] });
+V.blocks = S => ({ color: 'gray', blocks: [
+  T(`## 🚫 Blocked users\n${S.blocks.length ? 'Pick someone to unblock.' : 'You have not blocked anyone.'}`),
+  S.blocks.length ? sel('sel:unblock', 'Unblock someone', S.blocks.map(b => ({ label: 'Stranger ' + b.tag, value: String(b.id) }))) : null,
+  row(btn('nav:safety', 'Back', 'secondary', '⬅️')) ].filter(Boolean) });
+V.help = S => {
+  const cats = ['Chat', 'Profile', 'Safety', 'Staff'], cur = S.hcat;
+  return { color: 'blue', blocks: [
+    T(`## ❓ Help\n` + C.CMDS.filter(c => c.g === cur).map(c => `**${C.cname(c)}**${c.p ? ' · ' + c.p : ''}\n-# ${c.d}`).join('\n')),
+    row(...cats.map(g => btn('hp:' + g, g, 'secondary', null, { disabled: g === cur }))),
+    row(btn('nav:home', 'Home', 'primary', '🏠'), btn('nav:safety', 'Safety', 'secondary', '🛡️')) ] };
+};
+V.mod = (S, env) => {
+  const r = env.reports[0];
+  if (!r) return { color: 'green', blocks: [T('## 🛡️ Report queue\n🎉 The queue is empty.'), row(btn('nav:home', 'Home', 'secondary', '🏠'))] };
+  return { color: 'amber', blocks: [
+    T(`## 🛡️ Report #${r.id}\n**Reason:** ${r.reason}\n**Evidence:** ${r.n} messages saved\n**Reported by:** ${r.by} · ${r.ago} ago\n-# ${env.reports.length} in queue`),
+    row(btn('mod:warn', 'Warn', 'secondary', '⚠️'), btn('mod:ban24', 'Ban 24h', 'danger', '⏱️'), btn('mod:ban', 'Ban', 'danger', '⛔'), btn('mod:dismiss', 'Dismiss', 'success', '✅')),
+    row(btn('nav:home', 'Home', 'secondary', '🏠')) ] };
+};
+V.server = S => ({ color: 'blue', blocks: [
+  T('## 🧰 Server settings\nApplies to everyone on this server.'),
+  tg('sv.on', S.sv.on, 'Bot enabled', 'Allow /chat in this server'), tg('sv.vo', S.sv.vo, 'Verified-only', 'Only verified members can match'), tg('sv.safe', S.sv.safe, 'Safe mode', 'Stricter link and media filtering'),
+  row(btn('nav:home', 'Done', 'primary', '✅')) ] });
+C.view = (S, env) => { env = env || C.defEnv(); if (!V[S.screen]) S.screen = 'home'; return V[S.screen](S, env); };
+C.SCREENS = Object.keys(V);
+
+/* ---------- confirm-before-acting ---------- */
+const CF = (S, id) => ({
+  'chat:stop': ['⏹️ End this chat?', `${tag(S.chat)} is told you left. You can rate or block them afterwards.`, 'End chat', 1],
+  'chat:panic': ['🆘 Panic exit', `This ends the chat now, blocks ${tag(S.chat)} and saves the last 20 messages for moderators.`, 'Leave now', 1],
+  'chat:reveal': ['🔓 Reveal usernames?', `${tag(S.chat)} gets a private prompt. Usernames are shared only if you both accept. This cannot be undone.`, 'Send request', 0],
+  'end:block': ['🚫 Block this user?', 'You will never be matched with them again. You can undo this in Safety → Blocked.', 'Block', 1],
+  'rep:send': ['🚩 Send this report?', `Reason: **${S.rep && S.rep.reason}**. The last 20 messages are attached for moderators.`, 'Send report', 1],
+  'mod:ban': ['⛔ Ban permanently?', 'This is written to the audit log.', 'Ban', 1],
+  'mod:ban24': ['⏱️ Ban for 24 hours?', 'This is written to the audit log.', 'Ban 24h', 1],
+  'sv.on.off': ['🧰 Turn the bot off here?', 'Nobody can use /chat in this server until it is turned back on. Active chats keep running.', 'Turn off', 1],
+}[id]);
+
+/* ---------- games ---------- */
+C.gameStart = (g, q, round) => ({ g, q, round: round || 1, mine: null, theirs: null, score: 0, state: 'play', counted: false });
+C.gameCheck = (S, env) => {
+  const g = S.game; if (!g || g.mine == null || g.theirs == null || g.scored) return;
+  g.scored = true;
+  const G = C.GAMES[g.g], q = G.qs[g.q];
+  if (g.g === 'tri') { if (g.mine === q.a) g.score++; } else if (g.mine === g.theirs) g.score++;
+  if (!g.counted) { g.counted = true; S.stats.games++; S.quests.game = 1; S.xp += 5; }
+};
+
+/* ---------- matching: one rule set for the bot (the preview just simulates it) ---------- */
+C.score = function (A, B, waitedMs) {
+  if (A.blocks.some(x => x.id === B.id) || B.blocks.some(x => x.id === A.id)) return -1;
+  if (A.verifiedOnly && B.vlevel < 2) return -1;
+  if (B.verifiedOnly && A.vlevel < 2) return -1;
+  if ((A.mode === 'Nearby' || B.mode === 'Nearby') && A.region !== B.region) return -1;
+  const shareL = A.lang.some(l => B.lang.includes(l));
+  const lm = ['Same language', 'Language practice'];
+  if ((lm.includes(A.mode) || lm.includes(B.mode)) && !shareL) return -1;
+  if (A.age !== 'Any' && B.myAge !== A.age) return -1;
+  if (B.age !== 'Any' && A.myAge !== B.age) return -1;
+  const sh = A.interests.filter(i => B.interests.includes(i)).length;
+  if ((A.mode === 'Interest match' || B.mode === 'Interest match') && sh === 0 && waitedMs < 30000) return -1;
+  return sh * 2 + (shareL ? 1 : 0) + (A.vlevel >= 2 && B.vlevel >= 2 ? 1 : 0);
+};
+
+/* ---------- events from the other side (called by preview or bot runner) ---------- */
+function finish(S, why, env) {
+  const c = S.chat; if (!c) return;
+  S.last = { tag: c.tag, pid: c.pid, n: c.n, dur: Math.max(1, Math.round((env.now() - c.t0) / 1000)), why, blocked: false };
+  S.chat = null; S.game = null; S.rated = false; S.stats.chats++; S.xp += 10;
+  if (c.n >= 3) S.quests.chat++;
+  if (c.nearby) S.stats.nearby++;
+}
+C.matched = (S, p, env) => {
+  env = env || C.defEnv(); S.searching = null;
+  S.chat = { tag: '#' + p.tag, pid: p.id, verified: !!p.verified, showBadge: p.showBadge, region: p.region, shared: p.shared || [], mood: p.mood || 'Want to talk', t0: env.now(), n: 0, rev: 'none', uname: p.uname, nearby: S.mode === 'Nearby' };
+  S.game = null; S.screen = 'chat';
+};
+C.partnerLeft = (S, env) => { env = env || C.defEnv(); if (!S.chat) return; finish(S, 'partner', env); S.screen = 'ended'; };
+C.partnerReveal = (S, kind, uname) => { if (!S.chat) return; if (kind === 'req') S.chat.rev = 'got'; else if (kind === 'yes') { S.chat.rev = 'done'; S.chat.uname = uname || S.chat.uname; } else if (kind === 'no') S.chat.rev = 'none'; };
+C.partnerGame = (S, kind, v, env) => {
+  if (!S.chat) return;
+  if (kind === 'invite') { if (!S.game) S.game = { g: v, state: 'incoming' }; }
+  else if (kind === 'yes' && S.game && S.game.state === 'invited') { S.game = C.gameStart(S.game.g, v.q); S.screen = 'game'; }
+  else if (kind === 'no') S.game = null;
+  else if (kind === 'ans' && S.game && S.game.state === 'play') { S.game.theirs = v; C.gameCheck(S, env); }
+  else if (kind === 'next' && S.game) { S.game = Object.assign(C.gameStart(S.game.g, v.q, S.game.round + 1), { score: S.game.score, counted: true }); }
+  else if (kind === 'close') { S.game = null; if (S.screen === 'game') S.screen = 'chat'; }
+};
+C.received = S => { if (S.chat) S.chat.n++; };
+
+/* ---------- dispatch: every button, select and modal goes through here ---------- */
+const RANK = { User: 0, Mod: 1, Admin: 2 };
+C.dispatch = function (S, id, val, env, ok) {
+  env = env || C.defEnv();
+  const R = { fx: [] }, now = env.now();
+  const pop = (c, t, b) => { R.pop = { c, t, b }; return R; };
+  const go = s => { if (s !== S.screen) S.prev = S.screen; S.screen = s; return R; };
+  const fx = (t, o) => R.fx.push(Object.assign({ t }, o || {}));
+  const cool = (k, sec_) => { const l = S.cd[k] || 0; if (now - l < sec_ * 1000) { pop('amber', 'Slow down', `Try again in ${Math.ceil((sec_ * 1000 - (now - l)) / 1000)} seconds.`); return true; } S.cd[k] = now; return false; };
+  const need = lv => RANK[S.role || 'User'] >= RANK[lv];
+  if (id.startsWith('ok:')) return C.dispatch(S, id.slice(3), val, env, true);
+  if (S.minor) { S.screen = 'minor'; return R; }
+  /* daily reset */
+  if (S.qday !== env.day()) { S.qday = env.day(); S.quests = { chat: 0, rate: 0, game: 0 }; S.claimed = {}; S.poll = null; }
+  if (id === 'gate:yes') { S.adult = true; S.vlevel = Math.max(S.vlevel, 1); go('home'); return pop('green', 'Welcome!', 'Age confirmed. Set up your profile in Me, then press Find someone.'); }
+  if (id === 'gate:no') { S.minor = true; S.screen = 'minor'; return R; }
+  if (!S.adult && !id.startsWith('modal:')) { go('gate'); return R; }
+  if (id === 'no') { go(S.confirm ? S.confirm.back : 'home'); S.confirm = null; return R; }
+  /* confirmation */
+  if (!ok) {
+    let key = id;
+    if (id === 'tg:sv.on' && S.sv.on) key = 'sv.on.off';
+    const c = CF(S, key);
+    if (c && (S.chat || !key.startsWith('chat:') || key === 'chat:x')) { if (key === 'rep:send' && !(S.rep && S.rep.reason)) return pop('red', 'Pick a reason', 'Choose a reason first.'); S.confirm = { title: c[0], body: c[1], label: c[2], danger: !!c[3], yes: id, back: S.screen }; go('confirm'); return R; }
+    if (c && key === 'end:block') { S.confirm = { title: c[0], body: c[1], label: c[2], danger: true, yes: id, back: S.screen }; go('confirm'); return R; }
+    if (c && !key.startsWith('chat:')) { S.confirm = { title: c[0], body: c[1], label: c[2], danger: !!c[3], yes: id, back: S.screen }; go('confirm'); return R; }
+  }
+  const back_ = () => { S.confirm = null; };
+  const inChat = () => { if (!S.chat) { go(homeTarget(S)); pop('amber', 'No active chat', 'You are not in a chat right now.'); return false; } return true; };
+  const [a, b, c2] = id.split(':');
+
+  if (a === 'nav') {
+    if (b === 'home' || b === 'chat') return go(homeTarget(S));
+    if (['mod'].includes(b) && !need('Mod')) return pop('red', 'Missing permissions', 'This is for moderators only.');
+    if (b === 'server' && !need('Admin')) return pop('red', 'Missing permissions', 'This is for server admins only.');
+    if (b === 'game') return go(S.game && S.game.state === 'play' ? 'game' : homeTarget(S));
+    if (b === 'help') S.hcat = S.hcat || 'Chat';
+    return go(b);
+  }
+  if (a === 'hp') { S.hcat = b; return go('help'); }
+  if (a === 'stab') { S.stab = b; return go('settings'); }
+  if (id === 'chat:find') {
+    if (S.chat) return pop('amber', 'Already chatting', 'End or skip your current chat first.');
+    if (S.searching) return go('searching');
+    if (cool('chat:find', 2)) return R;
+    S.searching = { since: now }; fx('queue'); return go('searching');
+  }
+  if (id === 'chat:cancel') { S.searching = null; fx('unqueue'); go('home'); return pop('gray', 'Search cancelled', 'You left the queue.'); }
+  if (id === 'chat:any') { S.mode = 'Anyone'; S.searching = { since: S.searching ? S.searching.since : now }; fx('requeue'); return pop('blue', 'Switched to Anyone', 'Filters relaxed and you were requeued.'); }
+  if (id === 'nearby:find') { S.mode = 'Nearby'; if (S.chat) return pop('amber', 'Already chatting', 'End or skip your current chat first.'); if (cool('chat:find', 2)) return R; S.searching = { since: now }; fx('queue'); return go('searching'); }
+  if (id === 'nearby:any') { S.mode = 'Anyone'; return pop('blue', 'Match mode: Anyone', 'You can switch back any time.'); }
+  if (id === 'chat:skip') { if (!inChat()) return R; if (cool('chat:skip', 3)) return R; fx('end', { why: 'skip' }); finish(S, 'skip', env); S.searching = { since: now }; fx('queue'); return go('searching'); }
+  if (id === 'chat:stop') { if (!inChat()) return R; fx('end', { why: 'stop' }); finish(S, 'stop', env); back_(); return go('ended'); }
+  if (id === 'chat:ice') { if (!inChat()) return R; if (cool('chat:ice', 10)) return R; const t = C.ICE[Math.floor(Math.random() * C.ICE.length)]; fx('ice', { text: t }); return pop('amber', 'Icebreaker sent', t); }
+  if (id === 'chat:reveal') { if (!inChat()) return R; S.chat.rev = 'sent'; fx('reveal_req'); back_(); go('chat'); return pop('blue', 'Reveal requested', `${tag(S.chat)} got a private prompt. It expires in 60 seconds.`); }
+  if (id === 'reveal:yes') { if (!inChat()) return R; S.chat.rev = 'done'; fx('reveal_ans', { yes: true }); return pop('green', 'Usernames shared', 'You can now find each other on Discord.'); }
+  if (id === 'reveal:no') { if (!inChat()) return R; S.chat.rev = 'none'; fx('reveal_ans', { yes: false }); return pop('gray', 'Declined', 'Nothing was shared.'); }
+  if (id === 'chat:panic') { if (!inChat()) return R; const ch = S.chat; fx('panic'); S.blocks.push({ id: ch.pid, tag: ch.tag }); finish(S, 'panic', env); back_(); return go('panic'); }
+  if (id === 'chat:report') { if (!inChat()) return R; S.rep = { reason: null, details: '' }; return go('report'); }
+  if (a === 'sel' && b === 'reason') { S.rep = S.rep || { reason: null, details: '' }; S.rep.reason = val[0]; return pop('blue', 'Reason: ' + val[0], 'Moderators see this with the saved messages.'); }
+  if (id === 'rep:details') { R.modal = { id: 'modal:rdetails', title: 'Report details', fields: [{ id: 'details', label: 'What happened? (optional)', long: true, max: 300, req: false, val: S.rep && S.rep.details }] }; return R; }
+  if (id === 'modal:rdetails') { S.rep = S.rep || { reason: null, details: '' }; S.rep.details = (val.details || '').slice(0, 300); return pop('green', 'Details added', 'They will be attached to the report.'); }
+  if (id === 'rep:send') {
+    if (!S.chat) { back_(); go('home'); return pop('amber', 'No active chat', 'The chat already ended.'); }
+    const ch = S.chat, rep = S.rep; S.repN++; fx('report', { reason: rep.reason, details: rep.details, no: S.repN, pid: ch.pid }); fx('end', { why: 'report' });
+    S.blocks.push({ id: ch.pid, tag: ch.tag }); finish(S, 'report', env); S.last.blocked = true; S.rep = null; back_(); go('ended');
+    return pop('red', `Report #${S.repN} sent`, 'The last 20 messages are saved. Moderators were pinged and your partner was blocked.');
+  }
+  if (a === 'end') {
+    if (b === 'good' || b === 'bad') { if (S.rated) return R; S.rated = true; S.xp += 5; S.quests.rate = 1; if (b === 'good') S.stats.good++; return pop(b === 'good' ? 'green' : 'amber', b === 'good' ? 'Rated good' : 'Rated bad', b === 'good' ? '+5 XP. Your rating helps tune future matches.' : '+5 XP. We will match you differently next time.'); }
+    if (b === 'block') { const l = S.last; if (l && !l.blocked) { S.blocks.push({ id: l.pid, tag: l.tag }); l.blocked = true; fx('block', { pid: l.pid }); } back_(); go('ended'); return pop('red', 'Blocked', 'You will not be matched with them again.'); }
+  }
+  /* games */
+  if (a === 'game') {
+    if (b === 'invite') { if (!inChat()) return R; if (S.game) return pop('amber', 'Game in progress', 'Finish or close it first.'); S.game = { g: c2, state: 'invited' }; fx('game_invite', { g: c2 }); go('chat'); return pop('amber', 'Invite sent', `${tag(S.chat)} must accept before anything starts.`); }
+    if (b === 'yes') { if (!S.game || S.game.state !== 'incoming') return R; const qi = Math.floor(Math.random() * C.GAMES[S.game.g].qs.length); const g = S.game.g; S.game = C.gameStart(g, qi); fx('game_yes', { q: qi }); return go('game'); }
+    if (b === 'no') { S.game = null; fx('game_no'); return pop('gray', 'Declined', 'Invite declined.'); }
+    if (b === 'pick') { if (!S.game || S.game.state !== 'play' || S.game.mine != null) return R; S.game.mine = +c2; fx('game_ans', { v: +c2 }); C.gameCheck(S, env); return go('game'); }
+    if (b === 'next') { const g = S.game; if (!g || g.mine == null || g.theirs == null) return R; const qi = (g.q + 1 + Math.floor(Math.random() * 3)) % C.GAMES[g.g].qs.length; S.game = Object.assign(C.gameStart(g.g, qi, g.round + 1), { score: g.score, counted: true }); fx('game_next', { q: qi }); return go('game'); }
+    if (b === 'close') { S.game = null; fx('game_close'); return go(homeTarget(S)); }
+  }
+  if (a === 'poll') { if (S.poll) return R; S.poll = { v: +b }; S.xp += 5; return pop('green', 'Vote counted', '+5 XP. Results are shown on the Play tab.'); }
+  /* profile and settings */
+  if (id === 'prof:name') { R.modal = { id: 'modal:profile', title: 'Edit profile', fields: [{ id: 'alias', label: 'Alias (3–16 letters or numbers)', min: 3, max: 16, req: true, val: S.alias }, { id: 'bio', label: 'Bio (up to 80 characters)', long: true, max: 80, req: false, val: S.bio }] }; return R; }
+  if (id === 'modal:profile') {
+    const al = (val.alias || '').trim(), bio = (val.bio || '').trim(), e = (al && C.checkAlias(al)) || C.checkBio(bio);
+    if (e) return pop('red', 'Could not save', e);
+    if (al) S.alias = al; S.bio = bio; return pop('green', 'Profile saved', 'Strangers now see your updated card.');
+  }
+  if (a === 'sel') {
+    const v = val || [];
+    if (b === 'mode') { S.mode = v[0]; const m = C.MODES.find(x => x[0] === v[0]); if (v[0] === 'Nearby') S.region = S.region || 'Europe'; return pop('blue', `${m[1]} ${v[0]}`, m[2] + (v[0] === 'Nearby' ? `. Region: ${S.region}.` : '.')); }
+    if (b === 'age') { S.age = v[0]; return pop('blue', 'Age range: ' + v[0], v[0] === 'Any' ? 'No age filter. Everyone here is 18 or older.' : `Only matches people aged ${v[0]}.`); }
+    if (b === 'lang') { S.lang = v.slice(0, 3); return pop('blue', 'Languages saved', S.lang.join(', ')); }
+    if (b === 'region') { S.region = v[0]; return pop('purple', 'Region: ' + v[0], `${env.online(v[0])} online there. Only a broad region is ever used.`); }
+    if (b === 'avatar') { S.avatar = v[0]; return pop('blue', 'Avatar changed', v[0]); }
+    if (b === 'myage') { S.myAge = v[0]; return pop('blue', 'Age group: ' + v[0], 'Only used so age filters work. It is never shown to others.'); }
+    if (b === 'mood') { S.mood = v[0]; return pop('blue', 'Mood: ' + v[0], 'Shown on your card so people know what to expect.'); }
+    if (b === 'int') { S.interests = v.slice(0, 5); return pop('green', `${S.interests.length} of 5 interests saved`, S.interests.join(', ')); }
+    if (b === 'unblock') { const i = S.blocks.findIndex(x => String(x.id) === v[0]); if (i < 0) return R; const x = S.blocks.splice(i, 1)[0]; fx('unblock', { pid: x.id }); return pop('gray', 'Unblocked', `Stranger ${x.tag} can be matched with you again.`); }
+  }
+  if (a === 'tg') {
+    const k = id.slice(3);
+    if (k.startsWith('n.')) { const n = k.slice(2); S.notif[n] = !S.notif[n]; return pop(S.notif[n] ? 'green' : 'amber', (NOTIFS.find(x => x[0] === n)[1]) + (S.notif[n] ? ' on' : ' off'), S.notif[n] ? 'You will get this alert.' : 'You will not get this alert.'); }
+    if (k.startsWith('sv.')) { if (!need('Admin')) return pop('red', 'Missing permissions', 'Server admins only.'); const n = k.slice(3); S.sv[n] = !S.sv[n]; back_(); if (S.screen === 'confirm') go('server'); fx('sv', { k: n, v: S.sv[n] }); return pop(S.sv[n] ? 'green' : 'amber', 'Setting ' + (S.sv[n] ? 'on' : 'off'), 'Applies to everyone on this server.'); }
+    if (k === 'verifiedOnly' && S.vlevel < 2) return pop('red', 'Needs verification', 'Reach level 2 first.');
+    S[k] = !S[k]; const lab = (PRIV.find(x => x[0] === k) || [0, k])[1];
+    return pop(S[k] ? 'green' : 'amber', lab + (S[k] ? ' on' : ' off'), k === 'verifiedOnly' ? (S[k] ? 'You will only match verified users. Waits may be longer.' : 'Back to the full queue.') : 'Saved.');
+  }
+  if (a === 'daily') { const d = env.day(); if (S.lastDaily === d) return pop('amber', 'Already claimed', 'Come back tomorrow.'); S.streak = S.lastDaily === d - 1 ? S.streak + 1 : 1; S.lastDaily = d; S.xp += 50; return pop('amber', '+50 XP claimed', `🔥 ${S.streak}-day streak · ${S.xp} XP`); }
+  if (a === 'q') { const Q = { chat: [3, 40], rate: [1, 20], game: [1, 30] }[b]; if (!Q || S.claimed[b] || S.quests[b] < Q[0]) return R; S.claimed[b] = true; S.xp += Q[1]; return pop('amber', `+${Q[1]} XP`, 'Quest claimed.'); }
+  /* verify */
+  if (id === 'ver:age') { S.vlevel = Math.max(S.vlevel, 1); return pop('green', 'Age confirmed', 'Level 1 reached.'); }
+  if (id === 'ver:phone') { R.modal = { id: 'modal:vcode', title: 'Phone verification', fields: [{ id: 'code', label: '6-digit code', min: 6, max: 6, req: true }] }; return R; }
+  if (id === 'modal:vcode') { if (!/^\d{6}$/.test((val.code || '').trim())) return pop('red', 'Invalid code', 'Enter exactly 6 digits.'); S.vlevel = Math.max(S.vlevel, 2); return pop('green', 'Phone verified', 'Level 2 reached. Verified-only matching is unlocked.'); }
+  if (id === 'ver:selfie') { S.vlevel = 3; return pop('green', 'Selfie check passed', 'Level 3 reached.'); }
+  /* appeal */
+  if (id === 'ap:open') { R.modal = { id: 'modal:appeal', title: 'Appeal a decision', fields: [{ id: 'reason', label: 'Why should this be reviewed?', long: true, min: 20, max: 300, req: true }] }; return R; }
+  if (id === 'modal:appeal') { const r = (val.reason || '').trim(); if (r.length < 20) return pop('red', 'Too short', 'Write at least 20 characters so the reviewer has context.'); fx('appeal', { reason: r }); return pop('green', 'Appeal #0457 submitted', 'A different moderator reviews it within 48 hours.'); }
+  /* staff */
+  if (a === 'mod') {
+    if (!need('Mod')) return pop('red', 'Missing permissions', 'This is for moderators only.');
+    const r = env.reports[0]; if (!r) return go('mod');
+    const act = { warn: 'Warning sent', ban24: 'Banned for 24 hours', ban: 'Banned permanently', dismiss: 'Report dismissed' }[b];
+    back_(); go('mod'); fx('mod', { act: b, rep: r.id }); env.reports.shift();
+    return pop(b === 'dismiss' ? 'green' : 'red', `Report #${r.id}: ${act}`, 'Written to the audit log.');
+  }
+  return R;
+};
+
+/* ---------- slash commands -> dispatch ---------- */
+C.runCmd = function (S, key, o, env) {
+  env = env || C.defEnv(); o = o || {};
+  const D = (id, v) => C.dispatch(S, id, v, env);
+  const c = C.CMDS.find(x => C.cname(x) === '/' + key);
+  if (!c) { return { fx: [], pop: { c: 'red', t: 'Unknown command', b: 'Try /help.' } }; }
+  if (c.p && RANK[S.role || 'User'] < RANK[c.p]) return { fx: [], pop: { c: 'red', t: 'Missing permissions', b: `/${key} is for ${c.p === 'Mod' ? 'moderators' : 'server admins'} only.` } };
+  for (const op of c.o || []) if (op.req && (o[op.n] == null || o[op.n] === '')) return { fx: [], pop: { c: 'amber', t: 'Missing option', b: `Fill in **${op.n}**.` } };
+  switch (key) {
+    case 'menu': return D('nav:home');
+    case 'chat start': if (o.mode) S.mode = o.mode; return D('chat:find');
+    case 'chat skip': return D('chat:skip');
+    case 'chat stop': return D('chat:stop');
+    case 'chat reveal': return D('chat:reveal');
+    case 'chat icebreaker': return D('chat:ice');
+    case 'chat report': { if (!S.chat) return D('chat:report'); const r = D('chat:report'); S.rep.reason = o.reason; return r; }
+    case 'panic': return D('chat:panic');
+    case 'nearby': if (o.region) S.region = o.region; return D('nav:nearby');
+    case 'play': return D('nav:play');
+    case 'profile view': return D('nav:me');
+    case 'profile edit': if (o.alias || o.bio) return D('modal:profile', { alias: o.alias || S.alias, bio: o.bio != null ? o.bio : S.bio }); return D('prof:name');
+    case 'interests': { const l = String(o.list).split(',').map(x => x.trim().toLowerCase()).filter(x => C.ALL.includes(x)); if (!l.length) return { fx: [], pop: { c: 'red', t: 'No valid interests', b: 'Choose from: ' + C.ALL.join(', ') } }; return D('sel:int', l); }
+    case 'quests': return D('nav:quests');
+    case 'badges': return D('nav:badges');
+    case 'leaderboard': return D('nav:leaderboard');
+    case 'settings': return D('nav:settings');
+    case 'verify status': return D('nav:verify');
+    case 'verify code': return D('modal:vcode', { code: String(o.code).padStart(6, '0').slice(-6) === String(o.code) ? String(o.code) : String(o.code) });
+    case 'safety': return D('nav:safety');
+    case 'block list': return D('nav:blocks');
+    case 'appeal': return D('modal:appeal', { reason: o.reason });
+    case 'help': if (o.group) S.hcat = o.group; return D('nav:help');
+    case 'mod queue': return D('nav:mod');
+    case 'server settings': return D('nav:server');
+    case 'server setup': return { fx: [{ t: 'setup', channel: o.channel }], pop: { c: 'green', t: 'Channel set', b: `Panels will post in ${o.channel}.` } };
+  }
+  return { fx: [] };
+};
+
+if (typeof module !== 'undefined' && module.exports) module.exports = C; else root.Core = C;
+})(typeof window !== 'undefined' ? window : globalThis);

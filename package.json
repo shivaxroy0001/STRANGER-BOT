@@ -1,0 +1,14 @@
+{
+  "name": "stranger-bot",
+  "version": "4.0.0",
+  "description": "Anonymous stranger chat for Discord, built on Components V2",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "deploy": "node bot.js deploy",
+    "test": "node test/core.test.js && node test/engine.test.js"
+  },
+  "engines": { "node": ">=18.17" },
+  "dependencies": { "discord.js": "^14.19.0" },
+  "optionalDependencies": { "dotenv": "^16.4.5" }
+}
